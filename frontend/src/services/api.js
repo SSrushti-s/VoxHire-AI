@@ -1,5 +1,5 @@
 
-const API_URL = "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_BASE_URL ||"http://localhost:8000";
 
 // Start a new interview
 export async function startInterview(role, difficulty) {
