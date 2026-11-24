@@ -9,6 +9,7 @@ from app.services.jd_question_service import generate_jd_opening_question
 from app.services.interview_config import INTERVIEW_PHASES
 from app.services.persistance_service import save_interview
 
+
 ROLE_OPENING_QUESTIONS = {
     "React Developer":
         "To begin, tell me about your experience with JavaScript and React. Have you built any projects using them?",
@@ -42,12 +43,14 @@ def create_session(
         raise ValueError("Invalid interview mode.")
 
     if interview_mode == "role":
+
         if role not in ROLE_OPENING_QUESTIONS:
             raise ValueError("Please select a valid job role.")
 
         opening_question = ROLE_OPENING_QUESTIONS[role]
 
     else:
+
         if not jd_analysis:
             raise ValueError("Job description analysis is required.")
 
@@ -74,7 +77,6 @@ def create_session(
         "asked_questions": [opening_question],
 
         "main_questions_count": 0,
-
         "max_main_questions": 10,
 
         "current_target_skill": None,
@@ -103,7 +105,6 @@ def create_session(
         "phase": INTERVIEW_PHASES[0]["name"],
         "question": session["current_question"]
     }
-
 
 
 async def process_answer(session_id: str, answer: str):
@@ -158,7 +159,6 @@ async def process_answer(session_id: str, answer: str):
     return result
 
 
-
 def generate_report(session: dict):
 
     scores = session["scores"]
@@ -204,6 +204,7 @@ def generate_report(session: dict):
         )
         if required_skills else None
     )
+
     return {
         "role": session["role"],
         "interview_mode": session.get("interview_mode", "role"),
@@ -213,6 +214,7 @@ def generate_report(session: dict):
         "strengths": strengths[:5],
         "improvements": improvements[:5],
         "answers": session["answers"],
+
         "skill_coverage": {
             "required_skills": required_skills,
             "preferred_skills": preferred_skills,
@@ -220,6 +222,7 @@ def generate_report(session: dict):
             "unassessed_required_skills": uncovered_required,
             "required_coverage_percentage": required_coverage
         },
+
         "main_questions_count": session.get(
             "main_questions_count", 0
         ),
@@ -269,12 +272,14 @@ async def personalize_opening_question(session_id: str):
             )
 
         else:
+
             search_query = (
                 f"Projects, technical skills, experience and "
                 f"technologies relevant to a {session['role']} position"
             )
 
-        retrieved_chunks = search_resume(
+        # IMPORTANT: Await the asynchronous MongoDB search
+        retrieved_chunks = await search_resume(
             resume_id=resume_id,
             query=search_query,
             owner_id=session.get("candidate_id"),
@@ -282,6 +287,7 @@ async def personalize_opening_question(session_id: str):
         )
 
         if retrieved_chunks:
+
             resume_context = "\n\n".join(
                 item["text"] for item in retrieved_chunks
             )

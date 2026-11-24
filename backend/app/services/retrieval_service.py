@@ -1,33 +1,11 @@
 
 import uuid
+import re
 
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
-
-
-# Lazy-loaded embedding model
-embedding_model = None
+from app.core.database import get_database
 
 
-def get_embedding_model():
-    global embedding_model
-
-    if embedding_model is None:
-        print("Loading Sentence Transformer model...")
-
-        embedding_model = SentenceTransformer(
-            "all-MiniLM-L6-v2",
-            device="cpu"
-        )
-
-        print("Embedding model loaded successfully!")
-
-    return embedding_model
-
-
-# In-memory resume index storage
-resume_indexes = {}
+COLLECTION_NAME = "resume_chunks"
 
 
 def split_text(text, chunk_size=500, overlap=80):
@@ -38,7 +16,6 @@ def split_text(text, chunk_size=500, overlap=80):
 
     while start < len(words):
         end = start + chunk_size
-
         chunk = " ".join(words[start:end])
 
         if chunk.strip():
@@ -49,42 +26,46 @@ def split_text(text, chunk_size=500, overlap=80):
     return chunks
 
 
-def build_resume_index(text: str, owner_id: str):
+async def get_resume_collection():
+    db = get_database()
+    collection = db[COLLECTION_NAME]
+
+    # Create the text index if it does not already exist.
+    await collection.create_index(
+        [("text", "text")],
+        name="resume_text_index"
+    )
+
+    return collection
+
+
+async def build_resume_index(text: str, owner_id: str):
     if not text or not text.strip():
         raise ValueError("Resume text is empty.")
+
+    if not owner_id:
+        raise ValueError("Resume owner is required.")
 
     chunks = split_text(text)
 
     if not chunks:
         raise ValueError("No usable text found in resume.")
 
-    # Load the model only when needed
-    model = get_embedding_model()
-
-    embeddings = model.encode(
-        chunks,
-        convert_to_numpy=True,
-        normalize_embeddings=True
-    )
-
-    embeddings = np.asarray(
-        embeddings,
-        dtype=np.float32
-    )
-
-    dimension = embeddings.shape[1]
-
-    index = faiss.IndexFlatIP(dimension)
-
-    index.add(embeddings)
+    collection = await get_resume_collection()
 
     resume_id = str(uuid.uuid4())
 
-    resume_indexes[resume_id] = {
-        "index": index,
-        "chunks": chunks,
-        "owner_id": owner_id
-    }
+    documents = [
+        {
+            "resume_id": resume_id,
+            "owner_id": owner_id,
+            "chunk_id": chunk_id,
+            "text": chunk
+        }
+        for chunk_id, chunk in enumerate(chunks)
+    ]
+
+    await collection.insert_many(documents)
 
     return {
         "resume_id": resume_id,
@@ -92,59 +73,77 @@ def build_resume_index(text: str, owner_id: str):
     }
 
 
-def search_resume(
+async def search_resume(
     resume_id: str,
     query: str,
     top_k: int = 3,
     owner_id: str = None
 ):
-    if resume_id not in resume_indexes:
-        raise KeyError("Resume index not found.")
+    if not resume_id:
+        raise ValueError("Resume ID is required.")
 
-    resume_data = resume_indexes[resume_id]
-
-    # Check ownership before searching
-    if not owner_id or resume_data.get("owner_id") != owner_id:
-        raise PermissionError("You cannot access this resume.")
+    if not owner_id:
+        raise PermissionError("Resume owner is required.")
 
     if not query or not query.strip():
         raise ValueError("Search query cannot be empty.")
 
-    # Reuse the already-loaded model
-    model = get_embedding_model()
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1.")
 
-    query_embedding = model.encode(
-        [query],
-        convert_to_numpy=True,
-        normalize_embeddings=True
-    )
+    collection = await get_resume_collection()
 
-    query_embedding = np.asarray(
-        query_embedding,
-        dtype=np.float32
-    )
+    # Verify that this resume exists and belongs to the user.
+    resume = await collection.find_one({
+        "resume_id": resume_id
+    })
 
-    index = resume_data["index"]
-    chunks = resume_data["chunks"]
+    if not resume:
+        raise KeyError("Resume index not found.")
 
-    search_count = min(top_k, len(chunks))
+    if resume.get("owner_id") != owner_id:
+        raise PermissionError("You cannot access this resume.")
 
-    scores, indices = index.search(
-        query_embedding,
-        search_count
-    )
+    # Remove punctuation that can interfere with text search.
+    terms = re.findall(r"[A-Za-z0-9]+", query)
+
+    if not terms:
+        raise ValueError("Search query has no searchable words.")
+
+    search_query = " ".join(terms)
+
+    # Search only this user's resume chunks.
+    cursor = collection.find(
+        {
+            "resume_id": resume_id,
+            "owner_id": owner_id,
+            "$text": {
+                "$search": search_query
+            }
+        },
+        {
+            "_id": 0,
+            "chunk_id": 1,
+            "text": 1,
+            "score": {
+                "$meta": "textScore"
+            }
+        }
+    ).sort(
+        [("score", {"$meta": "textScore"})]
+    ).limit(top_k)
+
+    documents = await cursor.to_list(length=top_k)
 
     results = []
 
-    for score, chunk_index in zip(scores[0], indices[0]):
-
-        if chunk_index < 0:
-            continue
-
+    for document in documents:
         results.append({
-            "chunk_id": int(chunk_index),
-            "similarity_score": float(score),
-            "text": chunks[chunk_index]
+            "chunk_id": document["chunk_id"],
+            # Kept for compatibility with the previous response shape.
+            # This is now a MongoDB text relevance score, not cosine similarity.
+            "similarity_score": float(document.get("score", 0)),
+            "text": document["text"]
         })
 
     return results

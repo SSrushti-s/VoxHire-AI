@@ -67,13 +67,17 @@ async def upload_resume(
         )
 
     try:
+        # Extract text from the uploaded PDF
         result = extract_resume_text(pdf_bytes)
 
+        # Analyze the extracted resume using the existing analyzer
         candidate_profile = await analyze_resume(
             result["extracted_text"]
         )
 
-        index_result = build_resume_index(
+        # Store resume chunks in MongoDB
+        # IMPORTANT: build_resume_index is now asynchronous
+        index_result = await build_resume_index(
             result["extracted_text"],
             owner_id=user_id
         )
@@ -108,7 +112,9 @@ async def search_resume_endpoint(
     user_id = str(current_user["_id"])
 
     try:
-        results = search_resume(
+        # Search resume chunks stored in MongoDB
+        # IMPORTANT: search_resume is now asynchronous
+        results = await search_resume(
             resume_id=request.resume_id,
             query=request.query,
             top_k=request.top_k,

@@ -7,8 +7,6 @@ httpx
 python-dotenv
 pydantic-settings
 pypdf
-sentence-transformers
-faiss-cpu
 langgraph
 motor
 pwdlib[argon2]

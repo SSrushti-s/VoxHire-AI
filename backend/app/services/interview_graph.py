@@ -396,7 +396,8 @@ def handle_non_answer(state: VoxHireState):
 # ---------------------------------------------------------
 
 
-def retrieve_resume_context(state: VoxHireState):
+
+async def retrieve_resume_context(state: VoxHireState):
 
     session = state["session"]
 
@@ -430,9 +431,11 @@ def retrieve_resume_context(state: VoxHireState):
 
         try:
 
-            retrieved_chunks = search_resume(
+            # Search resume chunks stored in MongoDB
+            retrieved_chunks = await search_resume(
                 resume_id=resume_id,
                 query=retrieval_query,
+                owner_id=session.get("candidate_id"),
                 top_k=4
             )
 
