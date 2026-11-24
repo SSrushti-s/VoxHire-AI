@@ -6,8 +6,25 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 
 
-# Load the embedding model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+# Lazy-loaded embedding model
+embedding_model = None
+
+
+def get_embedding_model():
+    global embedding_model
+
+    if embedding_model is None:
+        print("Loading Sentence Transformer model...")
+
+        embedding_model = SentenceTransformer(
+            "all-MiniLM-L6-v2",
+            device="cpu"
+        )
+
+        print("Embedding model loaded successfully!")
+
+    return embedding_model
+
 
 # In-memory resume index storage
 resume_indexes = {}
@@ -41,7 +58,10 @@ def build_resume_index(text: str, owner_id: str):
     if not chunks:
         raise ValueError("No usable text found in resume.")
 
-    embeddings = embedding_model.encode(
+    # Load the model only when needed
+    model = get_embedding_model()
+
+    embeddings = model.encode(
         chunks,
         convert_to_numpy=True,
         normalize_embeddings=True
@@ -90,7 +110,10 @@ def search_resume(
     if not query or not query.strip():
         raise ValueError("Search query cannot be empty.")
 
-    query_embedding = embedding_model.encode(
+    # Reuse the already-loaded model
+    model = get_embedding_model()
+
+    query_embedding = model.encode(
         [query],
         convert_to_numpy=True,
         normalize_embeddings=True
