@@ -2,7 +2,10 @@
 const API_URL =
     import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+let sessionExpiredHandled = false;
+
 export function saveToken(token) {
+    sessionExpiredHandled = false;
     sessionStorage.setItem("access_token", token);
 }
 
@@ -14,6 +17,16 @@ export function logout() {
     sessionStorage.removeItem("access_token");
 }
 
+function handleExpiredSession(message = "Your session has expired. Please log in again.") {
+    logout();
+
+    if (!sessionExpiredHandled) {
+        sessionExpiredHandled = true;
+        window.speechSynthesis?.cancel();
+        alert(message);
+        window.location.reload();
+    }
+}
 
 // Common authenticated API helper
 export async function apiRequest(endpoint, options = {}) {
@@ -46,8 +59,12 @@ export async function apiRequest(endpoint, options = {}) {
     }
 
     if (response.status === 401) {
-        logout();
-        throw new Error("Your session has expired. Please log in again.");
+        const message = "Your session has expired. Please log in again.";
+        // Avoid triggering an alert on failed login attempts (/api/auth/login)
+        if (endpoint !== "/api/auth/login") {
+            handleExpiredSession(message);
+        }
+        throw new Error(data.detail || message);
     }
 
     if (!response.ok) {

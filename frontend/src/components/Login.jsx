@@ -16,7 +16,6 @@ export default function Login({ onSuccess, onSwitch }) {
             setError("");
 
             const result = await loginUser(email, password);
-
             onSuccess(result.user);
 
         } catch (error) {
@@ -27,37 +26,73 @@ export default function Login({ onSuccess, onSwitch }) {
     }
 
     return (
-        <div className="auth-container">
-            <form className="auth-card" onSubmit={handleSubmit}>
-                <h1>Welcome back 👋</h1>
-                <p>Log in to continue to VoxHire AI.</p>
+        <section className="auth-form-panel auth-login-panel">
+            <div className="auth-form-wrapper">
 
-                <label>Email</label>
-                <input
-                    type="email"
-                    value={email}
-                    onChange={event => setEmail(event.target.value)}
-                    placeholder="Enter your email"
-                    required
-                />
+                <div className="auth-heading">
+                    <span className="auth-heading-label">
+                        WELCOME BACK
+                    </span>
 
-                <label>Password</label>
-                <input
-                    type="password"
-                    value={password}
-                    onChange={event => setPassword(event.target.value)}
-                    placeholder="Enter your password"
-                    required
-                />
+                    <h2>Welcome back!</h2>
 
-                {error && <p className="auth-error">{error}</p>}
+                    <p>
+                        Sign in to continue your interview journey.
+                    </p>
+                </div>
 
-                <button type="submit" disabled={loading}>
-                    {loading ? "Logging in..." : "Login"}
-                </button>
+                <form className="auth-form" onSubmit={handleSubmit}>
 
-                <p>
-                    Don't have an account?{" "}
+                    <div className="auth-field">
+                        <label htmlFor="login-email">
+                            Email address
+                        </label>
+
+                        <input
+                            id="login-email"
+                            type="email"
+                            value={email}
+                            onChange={event => setEmail(event.target.value)}
+                            placeholder="you@example.com"
+                            autoComplete="email"
+                            required
+                        />
+                    </div>
+
+                    <div className="auth-field">
+                        <label htmlFor="login-password">
+                            Password
+                        </label>
+
+                        <input
+                            id="login-password"
+                            type="password"
+                            value={password}
+                            onChange={event => setPassword(event.target.value)}
+                            placeholder="Enter your password"
+                            autoComplete="current-password"
+                            required
+                        />
+                    </div>
+
+                    {error && (
+                        <p className="auth-error">{error}</p>
+                    )}
+
+                    <button
+                        type="submit"
+                        className="auth-submit"
+                        disabled={loading}
+                    >
+                        {loading ? "Signing in..." : "Login"}
+                        {!loading && <span>→</span>}
+                    </button>
+
+                </form>
+
+                <div className="auth-switch">
+                    Don't have an account?
+
                     <button
                         type="button"
                         className="auth-link"
@@ -65,8 +100,14 @@ export default function Login({ onSuccess, onSwitch }) {
                     >
                         Sign up
                     </button>
-                </p>
-            </form>
-        </div>
+                </div>
+
+                <div className="auth-security">
+                    <span>✦</span>
+                    Your information is securely protected.
+                </div>
+
+            </div>
+        </section>
     );
 }

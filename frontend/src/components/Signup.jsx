@@ -32,50 +32,93 @@ export default function Signup({ onSuccess, onSwitch }) {
     }
 
     return (
-        <div className="auth-container">
-            <form className="auth-card" onSubmit={handleSubmit}>
-                <h1>Create your account 🚀</h1>
-                <p>Start practicing interviews with VoxHire AI.</p>
+        <section className="auth-form-panel auth-signup-panel">
+            <div className="auth-form-wrapper">
 
-                <label>Full name</label>
-                <input
-                    type="text"
-                    value={name}
-                    onChange={event => setName(event.target.value)}
-                    placeholder="Enter your name"
-                    minLength={2}
-                    maxLength={80}
-                    required
-                />
+                <div className="auth-heading">
+                    <span className="auth-heading-label">
+                        GET STARTED
+                    </span>
 
-                <label>Email</label>
-                <input
-                    type="email"
-                    value={email}
-                    onChange={event => setEmail(event.target.value)}
-                    placeholder="Enter your email"
-                    required
-                />
+                    <h2>Create your account</h2>
 
-                <label>Password</label>
-                <input
-                    type="password"
-                    value={password}
-                    onChange={event => setPassword(event.target.value)}
-                    placeholder="At least 8 characters"
-                    minLength={8}
-                    maxLength={128}
-                    required
-                />
+                    <p>
+                        Start preparing for your dream career today.
+                    </p>
+                </div>
 
-                {error && <p className="auth-error">{error}</p>}
+                <form className="auth-form" onSubmit={handleSubmit}>
 
-                <button type="submit" disabled={loading}>
-                    {loading ? "Creating account..." : "Sign up"}
-                </button>
+                    <div className="auth-field">
+                        <label htmlFor="signup-name">
+                            Full name
+                        </label>
 
-                <p>
-                    Already have an account?{" "}
+                        <input
+                            id="signup-name"
+                            type="text"
+                            value={name}
+                            onChange={event => setName(event.target.value)}
+                            placeholder="Enter your full name"
+                            minLength={2}
+                            maxLength={80}
+                            autoComplete="name"
+                            required
+                        />
+                    </div>
+
+                    <div className="auth-field">
+                        <label htmlFor="signup-email">
+                            Email address
+                        </label>
+
+                        <input
+                            id="signup-email"
+                            type="email"
+                            value={email}
+                            onChange={event => setEmail(event.target.value)}
+                            placeholder="you@example.com"
+                            autoComplete="email"
+                            required
+                        />
+                    </div>
+
+                    <div className="auth-field">
+                        <label htmlFor="signup-password">
+                            Password
+                        </label>
+
+                        <input
+                            id="signup-password"
+                            type="password"
+                            value={password}
+                            onChange={event => setPassword(event.target.value)}
+                            placeholder="At least 8 characters"
+                            minLength={8}
+                            maxLength={128}
+                            autoComplete="new-password"
+                            required
+                        />
+                    </div>
+
+                    {error && (
+                        <p className="auth-error">{error}</p>
+                    )}
+
+                    <button
+                        type="submit"
+                        className="auth-submit"
+                        disabled={loading}
+                    >
+                        {loading ? "Creating account..." : "Create account"}
+                        {!loading && <span>→</span>}
+                    </button>
+
+                </form>
+
+                <div className="auth-switch">
+                    Already have an account?
+
                     <button
                         type="button"
                         className="auth-link"
@@ -83,8 +126,14 @@ export default function Signup({ onSuccess, onSwitch }) {
                     >
                         Login
                     </button>
-                </p>
-            </form>
-        </div>
+                </div>
+
+                <div className="auth-security">
+                    <span>✦</span>
+                    Your information is securely protected.
+                </div>
+
+            </div>
+        </section>
     );
 }
