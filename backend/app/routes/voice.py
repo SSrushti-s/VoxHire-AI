@@ -4,7 +4,8 @@ from fastapi.responses import Response
 
 from app.services.stt_service import transcribe_audio
 from app.services.tts_service import generate_speech
-
+from fastapi import Depends
+from app.core.security import get_current_user
 router = APIRouter(prefix="/api/voice", tags=["Voice"])
 
 

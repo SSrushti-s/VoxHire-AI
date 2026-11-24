@@ -20,3 +20,9 @@ ELEVENLABS_MODEL = os.getenv(
     "ELEVENLABS_MODEL",
     "eleven_flash_v2_5"
 )
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+JWT_ALGORITHM = "HS256"
+
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60

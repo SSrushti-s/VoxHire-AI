@@ -2,28 +2,12 @@
 import uuid
 from datetime import datetime, timezone
 
-from app.services.evaluation_service import evaluate_answer
-from app.services.intent_service import detect_intent
-
-INTERVIEW_PHASES = [
-    {
-        "name": "Introduction",
-        "max_questions": 1
-    },
-    {
-        "name": "Fundamentals",
-        "max_questions": 2
-    },
-    {
-        "name": "Core Technical Concepts",
-        "max_questions": 2
-    },
-    {
-        "name": "Practical Scenarios",
-        "max_questions": 2
-    }
-]
-
+from app.services.interview_graph import run_interview_workflow
+from app.services.retrieval_service import search_resume
+from app.services.question_service import generate_personalized_question
+from app.services.jd_question_service import generate_jd_opening_question
+from app.services.interview_config import INTERVIEW_PHASES
+from app.services.persistance_service import save_interview
 
 ROLE_OPENING_QUESTIONS = {
     "React Developer":
@@ -44,22 +28,68 @@ ROLE_OPENING_QUESTIONS = {
 sessions = {}
 
 
-def create_session(role: str, difficulty: str):
+def create_session(
+    role: str,
+    difficulty: str,
+    resume_id: str = None,
+    interview_mode: str = "role",
+    job_description: str = None,
+    jd_analysis: dict = None,
+    candidate_id: str = None
+):
+
+    if interview_mode not in ["role", "job_description"]:
+        raise ValueError("Invalid interview mode.")
+
+    if interview_mode == "role":
+        if role not in ROLE_OPENING_QUESTIONS:
+            raise ValueError("Please select a valid job role.")
+
+        opening_question = ROLE_OPENING_QUESTIONS[role]
+
+    else:
+        if not jd_analysis:
+            raise ValueError("Job description analysis is required.")
+
+        role = jd_analysis.get("job_title") or "Job Description Position"
+
+        opening_question = (
+            f"Let's discuss your suitability for the {role} position. "
+            "Could you briefly introduce your relevant experience?"
+        )
 
     session_id = str(uuid.uuid4())
 
     session = {
         "session_id": session_id,
+        "resume_id": resume_id,
+        "candidate_id": candidate_id,
+        "persisted_interview_id": None,
+        "interview_mode": interview_mode,
+        "job_description": job_description,
+        "jd_analysis": jd_analysis,
+        "covered_skills": [],
         "role": role,
         "difficulty": difficulty,
+        "asked_questions": [opening_question],
+
+        "main_questions_count": 0,
+
+        "max_main_questions": 10,
+
+        "current_target_skill": None,
         "phase_index": 0,
         "questions_in_phase": 0,
         "follow_up_count": 0,
-        "current_question": ROLE_OPENING_QUESTIONS[role],
+
+        "current_question": opening_question,
+
         "answers": [],
         "scores": [],
+
         "completed": False,
         "pending_end_confirmation": False,
+
         "created_at": datetime.now(timezone.utc).isoformat()
     }
 
@@ -68,6 +98,7 @@ def create_session(role: str, difficulty: str):
     return {
         "session_id": session_id,
         "role": role,
+        "interview_mode": interview_mode,
         "difficulty": difficulty,
         "phase": INTERVIEW_PHASES[0]["name"],
         "question": session["current_question"]
@@ -77,411 +108,54 @@ def create_session(role: str, difficulty: str):
 
 async def process_answer(session_id: str, answer: str):
 
+    result = await run_interview_workflow(
+        session_id=session_id,
+        answer=answer,
+        session_store=sessions,
+        report_generator=generate_report
+    )
+
     session = sessions.get(session_id)
 
-    if not session:
-        raise ValueError("Interview session not found.")
-
-    if session["completed"]:
-        raise ValueError("This interview has already been completed.")
-
-    if not answer.strip():
-        raise ValueError("Answer cannot be empty.")
-
-    # -------------------------------------------------
-    # STEP 1: Handle pending interview-end confirmation
-    # -------------------------------------------------
-
-    if session["pending_end_confirmation"]:
-
-        message = answer.strip().lower()
-
-        yes_responses = {
-            "yes", "yes please", "yeah", "yep",
-            "sure", "confirm", "end it", "please do"
-        }
-
-        no_responses = {
-            "no", "no thanks", "nope",
-            "continue", "keep going", "not yet"
-        }
-
-        if message in yes_responses:
-
-            session["pending_end_confirmation"] = False
-            session["completed"] = True
-
-            report = generate_report(session)
-
-            return {
-                "session_id": session_id,
-                "response": (
-                    "Your interview has been ended. "
-                    "Here is your final performance report."
-                ),
-                "evaluation": None,
-                "current_phase": "Completed",
-                "difficulty": session["difficulty"],
-                "interview_completed": True,
-                "report": report
-            }
-
-        elif message in no_responses:
-
-            session["pending_end_confirmation"] = False
-
-            return {
-                "session_id": session_id,
-                "response": (
-                    "No problem! Let's continue. "
-                    + session["current_question"]
-                ),
-                "evaluation": None,
-                "current_phase": INTERVIEW_PHASES[
-                    session["phase_index"]
-                ]["name"],
-                "difficulty": session["difficulty"],
-                "interview_completed": False,
-                "report": None
-            }
-
-        else:
-
-            return {
-                "session_id": session_id,
-                "response": (
-                    "Please say yes if you want to end the interview, "
-                    "or no if you want to continue."
-                ),
-                "evaluation": None,
-                "current_phase": INTERVIEW_PHASES[
-                    session["phase_index"]
-                ]["name"],
-                "difficulty": session["difficulty"],
-                "interview_completed": False,
-                "report": None
-            }
-
-
-    # -------------------------------------------------
-    # STEP 2: Detect candidate's intention
-    # -------------------------------------------------
-
-    try:
-        intent = await detect_intent(answer)
-        print("CANDIDATE MESSAGE:", answer)
-        print("PROCESSED INTENT:", intent)
-
-    except Exception as error:
-        print("Intent detection failed:", error)
-
-        # If intent detection fails, treat the message
-        # as an attempted interview answer.
-        intent = "ANSWER"
-
-
-    # -------------------------------------------------
-    # STEP 3: Handle non-answer messages
-    # -------------------------------------------------
-
-    current_phase = INTERVIEW_PHASES[
-        session["phase_index"]
-    ]["name"]
-
-
-    # Candidate wants the question repeated.
-    if intent == "REPEAT":
-
-        return {
-            "session_id": session_id,
-            "response": session["current_question"],
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": False,
-            "report": None
-        }
-
-
-    # Candidate wants clarification.
-    if intent == "CLARIFY":
-
-        return {
-            "session_id": session_id,
-            "response": (
-                "Certainly! I can clarify the question. "
-                "Please tell me which part you would like me to explain. "
-                "The current question is: "
-                + session["current_question"]
-            ),
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": False,
-            "report": None
-        }
-
-
-    # Candidate requests a hint.
-    if intent == "HINT":
-
-        return {
-            "session_id": session_id,
-            "response": (
-                "Here's a small hint: think about the main purpose "
-                "of the concept, how it works internally, and where "
-                "you would use it in a practical application. "
-                "Try answering in your own words. "
-                "Your question is: "
-                + session["current_question"]
-            ),
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": False,
-            "report": None
-        }
-
-
-    # Candidate requests a progress or final report.
-    if intent == "REPORT_REQUEST":
-
-        report = generate_report(session)
-
-        if session["completed"]:
-            report_message = (
-                "Your final interview report is ready. "
-            )
-        else:
-            report_message = (
-                "Your interview is still in progress. "
-                "Here is your progress report so far. "
-            )
-
-        report_message += (
-            f"You have submitted {report['total_answers']} answers. "
-            f"Your current average score is "
-            f"{report['overall_score']} out of 10. "
-        )
-
-        if report["strengths"]:
-            report_message += (
-                "Your strengths include: "
-                + ", ".join(report["strengths"][:3])
-                + ". "
-            )
-
-        if report["improvements"]:
-            report_message += (
-                "Areas to improve include: "
-                + ", ".join(report["improvements"][:3])
-                + ". "
-            )
-
-        if not session["completed"]:
-            report_message += (
-                "Let's continue with your current question: "
-                + session["current_question"]
-            )
-
-        return {
-            "session_id": session_id,
-            "response": report_message,
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": session["completed"],
-            "report": report
-        }
-
-
-    # Candidate explicitly wants to end the interview.
-    if intent == "END_INTERVIEW":
-
-        session["pending_end_confirmation"] = True
-
-        return {
-            "session_id": session_id,
-            "response": (
-                "Are you sure you want to end this interview? "
-                "Say yes to finish and generate your final report, "
-                "or no to continue."
-            ),
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": False,
-            "report": None
-        }
-
-
-    # General conversation or unrelated message.
-    if intent == "OTHER":
-
-        return {
-            "session_id": session_id,
-            "response": (
-                "I'm here to help with your interview. "
-                "You can answer the current question, ask for a hint, "
-                "request clarification, or ask for your progress report. "
-                "Your current question is: "
-                + session["current_question"]
-            ),
-            "evaluation": None,
-            "current_phase": current_phase,
-            "difficulty": session["difficulty"],
-            "interview_completed": False,
-            "report": None
-        }
-
-
-    # -------------------------------------------------
-    # STEP 4: Evaluate actual candidate answer
-    # -------------------------------------------------
-
-    phase = INTERVIEW_PHASES[session["phase_index"]]
-
-    next_phase_index = session["phase_index"]
-
+    # Save only after the interview has been completed.
     if (
-        session["questions_in_phase"] + 1
-        >= phase["max_questions"]
+        result.get("interview_completed")
+        and session
+        and not session.get("persisted_interview_id")
     ):
-        next_phase_index += 1
 
-    if next_phase_index < len(INTERVIEW_PHASES):
-        next_phase = INTERVIEW_PHASES[next_phase_index]["name"]
-    else:
-        next_phase = "Interview completed"
+        report = result.get("report") or generate_report(session)
 
-    follow_up_allowed = session["follow_up_count"] == 0
+        try:
 
-    evaluation = await evaluate_answer(
-        role=session["role"],
-        difficulty=session["difficulty"],
-        phase=phase["name"],
-        question=session["current_question"],
-        answer=answer,
-        next_phase=next_phase,
-        follow_up_allowed=follow_up_allowed,
-        previous_answers=session["answers"]
-    )
-
-
-    # -------------------------------------------------
-    # STEP 5: Store answer and evaluation
-    # -------------------------------------------------
-
-    record = {
-        "phase": phase["name"],
-        "question": session["current_question"],
-        "answer": answer,
-        "score": evaluation["score"],
-        "feedback": evaluation["feedback"],
-        "strengths": evaluation["strengths"],
-        "improvements": evaluation["improvements"]
-    }
-
-    session["answers"].append(record)
-    session["scores"].append(evaluation["score"])
-
-
-    # -------------------------------------------------
-    # STEP 6: Decide follow-up or next question
-    # -------------------------------------------------
-
-    ask_follow_up = (
-        evaluation["ask_follow_up"] and follow_up_allowed
-    )
-
-    if ask_follow_up:
-
-        session["follow_up_count"] += 1
-
-        next_question = evaluation["next_question"]
-
-    else:
-
-        session["questions_in_phase"] += 1
-        session["follow_up_count"] = 0
-
-        if (
-            session["questions_in_phase"]
-            >= phase["max_questions"]
-        ):
-
-            session["phase_index"] += 1
-            session["questions_in_phase"] = 0
-
-        if session["phase_index"] >= len(INTERVIEW_PHASES):
-
-            session["completed"] = True
-
-            next_question = (
-                "Thank you! You have completed your interview. "
-                "Here is your performance summary."
+            interview_id = await save_interview(
+                candidate_id=session["candidate_id"],
+                session_id=session_id,
+                role=session["role"],
+                difficulty=session["difficulty"],
+                report=report
             )
 
-        else:
+            # Remember the MongoDB ID to prevent duplicate saves.
+            session["persisted_interview_id"] = interview_id
 
-            next_question = evaluation["next_question"]
+            result["persistence_saved"] = True
 
+            print(
+                "INTERVIEW SAVED TO MONGODB:",
+                interview_id
+            )
 
-    # -------------------------------------------------
-    # STEP 7: Protect against empty questions
-    # -------------------------------------------------
+        except Exception as error:
 
-    if not next_question.strip():
+            print("INTERVIEW PERSISTENCE ERROR:", error)
 
-        next_question = (
-            "Let's move on. Can you explain your approach in more detail?"
-        )
+            result["persistence_saved"] = False
+            result["persistence_error"] = (
+                "Interview completed, but saving to MongoDB failed."
+            )
 
-
-    # -------------------------------------------------
-    # STEP 8: Update session state
-    # -------------------------------------------------
-
-    session["difficulty"] = evaluation["next_difficulty"]
-
-    session["current_question"] = next_question
-
-    report = None
-
-    if session["completed"]:
-        report = generate_report(session)
-
-
-    # -------------------------------------------------
-    # STEP 9: Return result to React frontend
-    # -------------------------------------------------
-
-    return {
-        "session_id": session_id,
-
-        "response": next_question,
-
-        "evaluation": {
-            "score": evaluation["score"],
-            "feedback": evaluation["feedback"],
-            "strengths": evaluation["strengths"],
-            "improvements": evaluation["improvements"]
-        },
-
-        "current_phase": (
-            "Completed"
-            if session["completed"]
-            else INTERVIEW_PHASES[
-                session["phase_index"]
-            ]["name"]
-        ),
-
-        "difficulty": session["difficulty"],
-
-        "interview_completed": session["completed"],
-
-        "report": report
-    }
+    return result
 
 
 
@@ -501,18 +175,60 @@ def generate_report(session: dict):
         all_strengths.extend(answer["strengths"])
         all_improvements.extend(answer["improvements"])
 
-    # Remove duplicate feedback items.
     strengths = list(dict.fromkeys(all_strengths))
     improvements = list(dict.fromkeys(all_improvements))
 
+    jd_analysis = session.get("jd_analysis") or {}
+
+    required_skills = jd_analysis.get("required_skills", [])
+    preferred_skills = jd_analysis.get("preferred_skills", [])
+
+    covered_skills = session.get("covered_skills", [])
+
+    covered_lookup = {
+        skill.casefold() for skill in covered_skills
+    }
+
+    uncovered_required = [
+        skill
+        for skill in required_skills
+        if skill.casefold() not in covered_lookup
+    ]
+
+    required_coverage = (
+        round(
+            (
+                len(required_skills) - len(uncovered_required)
+            ) / len(required_skills) * 100,
+            2
+        )
+        if required_skills else None
+    )
     return {
         "role": session["role"],
+        "interview_mode": session.get("interview_mode", "role"),
         "total_answers": len(scores),
         "overall_score": average_score,
         "max_score": 10,
         "strengths": strengths[:5],
         "improvements": improvements[:5],
-        "answers": session["answers"]
+        "answers": session["answers"],
+        "skill_coverage": {
+            "required_skills": required_skills,
+            "preferred_skills": preferred_skills,
+            "assessed_skills": covered_skills,
+            "unassessed_required_skills": uncovered_required,
+            "required_coverage_percentage": required_coverage
+        },
+        "main_questions_count": session.get(
+            "main_questions_count", 0
+        ),
+
+        "final_difficulty": session["difficulty"],
+
+        "questions_asked": len(
+            session.get("asked_questions", [])
+        )
     }
 
 
@@ -527,3 +243,72 @@ def get_session_report(session_id: str):
         raise ValueError("Interview has not been completed yet.")
 
     return generate_report(session)
+
+
+async def personalize_opening_question(session_id: str):
+
+    session = sessions.get(session_id)
+
+    if not session:
+        raise ValueError("Interview session not found.")
+
+    resume_context = ""
+    resume_id = session.get("resume_id")
+
+    # Retrieve resume information if available
+    if resume_id:
+
+        if session["interview_mode"] == "job_description":
+
+            jd_analysis = session["jd_analysis"]
+
+            search_query = " ".join(
+                jd_analysis.get("required_skills", [])
+                + jd_analysis.get("preferred_skills", [])
+                + jd_analysis.get("interview_focus_areas", [])
+            )
+
+        else:
+            search_query = (
+                f"Projects, technical skills, experience and "
+                f"technologies relevant to a {session['role']} position"
+            )
+
+        retrieved_chunks = search_resume(
+            resume_id=resume_id,
+            query=search_query,
+            owner_id=session.get("candidate_id"),
+            top_k=4
+        )
+
+        if retrieved_chunks:
+            resume_context = "\n\n".join(
+                item["text"] for item in retrieved_chunks
+            )
+
+    # JD-based opening question
+    if session["interview_mode"] == "job_description":
+
+        question = await generate_jd_opening_question(
+            difficulty=session["difficulty"],
+            jd_analysis=session["jd_analysis"],
+            resume_context=resume_context
+        )
+
+    # Existing role-based opening question
+    else:
+
+        if not resume_context:
+            return session["current_question"]
+
+        question = await generate_personalized_question(
+            role=session["role"],
+            difficulty=session["difficulty"],
+            resume_context=resume_context
+        )
+
+    session["current_question"] = question
+
+    print("PERSONALIZED OPENING QUESTION:", question)
+
+    return question
